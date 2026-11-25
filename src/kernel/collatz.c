@@ -1,4 +1,5 @@
 #include <linux/init.h>
+#include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -10,13 +11,17 @@ module_param(start, int, 0);
 MODULE_PARM_DESC(start, "Positive starting integer for the Collatz sequence");
 struct collatz_node { u64 value; struct list_head list; };
 static LIST_HEAD(collatz_list);
-static void collatz_exit(void)
+/* Shared by the init error paths and module exit: unlink and kfree every node; returns how many were freed. */
+static unsigned int collatz_free_all(void)
 {
     struct collatz_node *entry, *next;
+    unsigned int freed = 0;
     list_for_each_entry_safe(entry, next, &collatz_list, list) {
         list_del(&entry->list);
         kfree(entry);
+        ++freed;
     }
+    return freed;
 }
 static int __init collatz_init(void)
 {
@@ -31,7 +36,7 @@ static int __init collatz_init(void)
     for (;;) {
         entry = kmalloc(sizeof(*entry), GFP_KERNEL);
         if (!entry) {
-            collatz_exit();
+            collatz_free_all();
             printk(KERN_ERR "collatz: kmalloc failed\n");
             return -ENOMEM;
         }
@@ -43,7 +48,7 @@ static int __init collatz_init(void)
         if (value & 1) {
             /* Compile-time constant division; no runtime 64-bit division. */
             if (value > (~(u64)0 - 1) / 3) {
-                collatz_exit();
+                collatz_free_all();
                 printk(KERN_ERR "collatz: unsigned 64-bit overflow\n");
                 return -EINVAL;
             }
@@ -56,7 +61,13 @@ static int __init collatz_init(void)
         printk(KERN_INFO "collatz[%u]: value=%llu\n", index++, (unsigned long long)entry->value);
     return 0;
 }
+static void __exit collatz_exit(void)
+{
+    unsigned int freed = collatz_free_all();
+    printk(KERN_INFO "collatz: freed %u nodes\n", freed);
+}
 module_init(collatz_init);
 module_exit(collatz_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("F.CSM302 BD1: Collatz sequence in a circular linked list");
+MODULE_AUTHOR("IV-2-4 BD2 team");
+MODULE_DESCRIPTION("F.CSM302 BD2: Collatz sequence in a circular linked list");

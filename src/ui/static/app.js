@@ -23,6 +23,8 @@ const errors = {
 };
 let active = "color", history = [], cursor = -1, busy = false;
 let scene = {width: 1100, height: 320}, camera = {x: 0, y: 0, scale: 1}, animation = 0;
+const MIN_FIT_SCALE = .25;
+let showAll = false, fitFrameWidth = 0, fitFrameHeight = 0;
 let drag = null;
 const graph = $("graph"), frame = $("graph-frame");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -55,7 +57,7 @@ function field(name, label, value, options = {}) {
   const input = document.createElement("input"); input.id = `field-${name}`; input.name = name; input.value = value;
   input.type = options.type || "number"; input.required = !options.optional; input.autocomplete = "off";
   if (input.type === "number") { input.step = "1"; if (options.min !== undefined) input.min = options.min; if (options.max !== undefined) input.max = options.max; }
-  else { input.inputMode = "numeric"; input.pattern = "[+-]?[0-9]+"; }
+  else { input.inputMode = "numeric"; input.pattern = "[+\\-]?[0-9]+"; /* "\\-" is required: Chrome compiles pattern with the RegExp v flag, where a bare "-" in a class is invalid */ }
   if (options.optional) input.placeholder = "Дурын";
   box.append(lab, input); return box;
 }
@@ -71,7 +73,7 @@ function updateFields() {
       hint = optional ? "RGB: 0–255. Дор хаяж нэг өнгө өгнө. Устгах үйлдэл бүх тохирох зангилааг чөлөөлнө." : "RGB суваг бүр 0–255. insert нь өгсөн индексийн дараа нэмнэ.";
     }
   } else if (active === "collatz") {
-    if (op === "run") { fields.append(field("start", "Эхлэх утга · start", "25", {min: 1, max: 2147483647})); hint = "1–2147483647. Өмнөх дарааллыг солино. Утгуудыг 64 битээр хадгална."; }
+    if (op === "run") { fields.append(field("start", "Эхлэх утга · start", "25", {min: 1, max: 2147483647})); hint = "1–2147483647. Өмнөх дарааллыг солино. Дүрэм: n тэгш бол n/2, сондгой бол 3n+1; 1 хүрэхэд зогсоно. Утгуудыг 64 битээр хадгална."; }
     else if (op === "search" || op === "delete") { fields.append(field("value", "Хайх утга · value", "88", {type: "text"})); hint = "Бүхэл тоо оруулна. Хайлт зангилаа бүрээр дарааллаар явна."; }
   } else if (op === "push" || op === "enqueue") { fields.append(field("value", "Зангилааны утга · value", "42", {type: "text"})); hint = "Тэмдэгтэй 64 битийн бүхэл тоо. Стек: LIFO · дараалал: FIFO."; }
   $("form-hint").textContent = hint;
@@ -196,9 +198,20 @@ function renderGraph(list, reply, fit) {
     marker.append(element("path", {d: "M0 0 L7 3.5 L0 7 Z", fill: color})); defs.append(marker);
   }
   graph.append(defs);
-  const nodes = [{id: "head", fields: {}, ...list.head}, ...list.nodes], cols = Math.min(5, nodes.length), w = 172, h = 126, pitch = 210, rowPitch = 208;
+  const nodes = [{id: "head", fields: {}, ...list.head}, ...list.nodes];
+  const w = 172, h = 126, pitch = 210, rowPitch = 208, marginX = 104 - (pitch - w), marginY = 86;
+  let cols = Math.min(5, nodes.length);
+  frame.style.minHeight = "";
+  if (showAll) {
+    fitFrameWidth = frame.clientWidth || 600;
+    const maxRows = Math.max(1, Math.floor(((frame.clientHeight || 390) / MIN_FIT_SCALE - marginY) / rowPitch));
+    const maxCols = Math.max(1, Math.floor((fitFrameWidth / MIN_FIT_SCALE - marginX) / pitch));
+    cols = Math.min(maxCols, Math.max(cols, Math.ceil(nodes.length / maxRows)));
+  }
   const locations = new Map(nodes.map((node, i) => [node.id, {x: 52 + (i % cols) * pitch, y: 72 + Math.floor(i / cols) * rowPitch}]));
-  scene = {width: 104 + cols * pitch - (pitch - w), height: 72 + Math.ceil(nodes.length / cols) * rowPitch + 14};
+  scene = {width: marginX + cols * pitch, height: marginY + Math.ceil(nodes.length / cols) * rowPitch};
+  // On narrow screens, add height if the widest layout still cannot fit at 25%.
+  if (showAll) frame.style.minHeight = `${Math.ceil(scene.height * MIN_FIT_SCALE) + frame.offsetHeight - frame.clientHeight}px`;
   const edges = element("g", {"aria-hidden": "true"}), bodies = element("g"); graph.append(edges, bodies);
   nodes.forEach((source) => {
     const a = locations.get(source.id);
@@ -251,7 +264,14 @@ function renderGraph(list, reply, fit) {
     if (active === "queue" && i > 0 && (i === 1 || i === nodes.length - 1)) group.append(element("text", {x: 0, y: -12, class: "position-label"}, `${i === 1 ? "FRONT · эхлэл" : ""}${i === 1 && i === nodes.length - 1 ? " / " : ""}${i === nodes.length - 1 ? "REAR · төгсгөл" : ""}`));
     bodies.append(group);
   });
-  if (fit) { fitWidth(); if (frame.clientWidth < 650 && camera.scale < .85) { camera.scale = .85; updateCamera(); } } else updateCamera();
+  if (showAll) {
+    fitFrameHeight = frame.clientHeight;
+    camera = {x: 0, y: 0, scale: Math.min(1.35, fitFrameWidth / scene.width, fitFrameHeight / scene.height)};
+    updateCamera();
+  } else if (fit) {
+    fitWidth();
+    if (frame.clientWidth < 650 && camera.scale < .85) { camera.scale = .85; updateCamera(); }
+  } else updateCamera();
   if (cursor === history.length - 1 && reply.ok && /\b(search|traverse)\b/.test(reply.command)) animateVisited(reply.effect?.visited || []);
 }
 function updateCamera() {
@@ -259,12 +279,20 @@ function updateCamera() {
   graph.setAttribute("viewBox", `${camera.x} ${camera.y} ${width / camera.scale} ${height / camera.scale}`);
   $("zoom-level").textContent = `${Math.round(camera.scale * 100)}%`;
 }
+function fitAll() {
+  showAll = true; render();
+}
 function fitWidth() { camera = {x: 0, y: 0, scale: Math.min(1.35, (frame.clientWidth || 600) / scene.width)}; updateCamera(); }
+function restoreFitWidth() {
+  if (showAll) { showAll = false; render(); }
+  fitWidth();
+}
 function zoom(factor, centerX = frame.clientWidth / 2, centerY = frame.clientHeight / 2) {
   const old = camera.scale; camera.scale = Math.max(.12, Math.min(3, old * factor));
   camera.x += centerX / old - centerX / camera.scale; camera.y += centerY / old - centerY / camera.scale; updateCamera();
 }
-$("fit").addEventListener("click", fitWidth);
+$("fit").addEventListener("click", restoreFitWidth);
+$("fit-all").addEventListener("click", fitAll);
 $("zoom-in").addEventListener("click", () => zoom(1.25));
 $("zoom-out").addEventListener("click", () => zoom(.8));
 frame.addEventListener("wheel", (event) => { if (!event.ctrlKey && !event.metaKey) return; event.preventDefault(); const rect = frame.getBoundingClientRect(); zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, event.clientX - rect.left, event.clientY - rect.top); }, {passive: false});
@@ -280,7 +308,8 @@ frame.addEventListener("keydown", (event) => {
   else if (event.key === "ArrowDown") camera.y += delta;
   else if (event.key === "+" || event.key === "=") zoom(1.25);
   else if (event.key === "-") zoom(.8);
-  else if (event.key === "Home") fitWidth();
+  else if (event.key === "Home") restoreFitWidth();
+  else if (event.key === "End") fitAll();
   else return;
   event.preventDefault(); updateCamera();
 });
@@ -305,7 +334,10 @@ $("back").addEventListener("click", () => stepHistory(cursor - 1));
 $("forward").addEventListener("click", () => stepHistory(cursor + 1));
 $("latest").addEventListener("click", () => stepHistory(history.length - 1));
 $("history").addEventListener("input", (event) => stepHistory(Number(event.target.value)));
-new ResizeObserver(updateCamera).observe(frame);
+new ResizeObserver(() => {
+  if (showAll && (frame.clientWidth !== fitFrameWidth || frame.clientHeight !== fitFrameHeight)) render();
+  else updateCamera();
+}).observe(frame);
 async function start() {
   selectTab("color"); lockControls(); await send("state", true);
   const demo = new URLSearchParams(location.search).get("run");

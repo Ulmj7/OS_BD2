@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional real-browser check, adapted from the developer CDP script; stdlib only."""
+"""Optional real-browser check, using CDP; stdlib only."""
 import base64
 import hashlib
 import shutil
@@ -54,6 +54,10 @@ class CDP:
             if not a&128: continue
             response=json.loads(message); message=b''
             if response.get('method')=='Runtime.exceptionThrown': self.errors.append(response)
+            if response.get('method')=='Log.entryAdded':
+                message_text = response['params']['entry']['text']
+                if 'Pattern attribute value' in message_text and 'is not a valid regular expression' in message_text:
+                    self.errors.append(message_text)
             if response.get('id')==self.serial:
                 assert 'error' not in response, response
                 return response.get('result',{})
@@ -87,7 +91,7 @@ try:
             if time.monotonic()>deadline: raise
             time.sleep(.1)
     tab=next(x for x in targets if x['type']=='page'); c=CDP(tab['webSocketDebuggerUrl'])
-    c.call('Page.enable'); c.call('Runtime.enable')
+    c.call('Page.enable'); c.call('Runtime.enable'); c.call('Log.enable')
     urllib.request.urlopen(urllib.request.Request(BASE+'/api/restart', data=b'{}', headers={'Content-Type':'application/json'})).close()
     c.call('Emulation.setDeviceMetricsOverride',{'width':1500,'height':1350,'deviceScaleFactor':1,'mobile':False})
     c.navigate(BASE+'/?run=reset;color%20example',3)
@@ -113,12 +117,28 @@ try:
     theme=c.js('$("theme").getAttribute("aria-pressed")'); c.js('$("theme").click()'); assert c.js('$("theme").getAttribute("aria-pressed")')!=theme
     c.js('send("stack push value=9223372036854775807")')
     assert '9223372036854775807' in c.js('$("graph").textContent')
+    for value in ('abc', '-5', '+7', '42'):
+        c.js('$("field-value").focus(); $("field-value").select()')
+        c.call('Input.insertText', {'text': value})
+        assert c.js('$("field-value").value') == value
+        assert c.js('$("field-value").validity.patternMismatch') == (value == 'abc')
+        before = c.js('history.length')
+        c.js('$("operation-form").requestSubmit()')
+        if value == 'abc':
+            assert c.js('!busy && history.length') == before
+            c.screenshot('09_stack_pattern.png')
+        else:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and c.js('busy'):
+                time.sleep(.05)
+            assert c.js('history.length') == before + 1
+            assert c.js('history[cursor].ok && history[cursor].command') == f'stack push value={value}'
     c.js('stepHistory(cursor-1)'); assert c.js('$("operation-fields").disabled')
     for width in (320,390):
         c.call('Emulation.setDeviceMetricsOverride',{'width':width,'height':1100,'deviceScaleFactor':1,'mobile':True})
         assert c.js('document.documentElement.scrollWidth <= innerWidth')
     assert not c.errors,c.errors
-    print('PASS UI controls: actual search/delete form submissions; RGB validation; zoom; keyboard and pointer pan; theme toggle; exact int64 display; history lock; 320/390px no overflow')
+    print('PASS UI controls: search/delete/push form submissions; RGB validation; Stack rejects abc and accepts -5, +7, 42; no pattern or JS console errors; zoom; keyboard and pointer pan; theme toggle; exact int64 display; history lock; 320/390px no overflow')
 finally:
     process.terminate()
     try: process.wait(timeout=5)

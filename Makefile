@@ -12,7 +12,7 @@ TEST_SOURCES := $(wildcard tests/test_*.c)
 TEST_BINS := $(patsubst tests/%.c,$(BUILD)/tests/%,$(TEST_SOURCES))
 SAN_FLAGS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -x c - -fsanitize=address,undefined -o /tmp/kds-sanitize-$$$$ 2>/dev/null && rm -f /tmp/kds-sanitize-$$$$ && printf '%s' '-fsanitize=address,undefined -fno-omit-frame-pointer')
 KDIR ?= /lib/modules/$(shell uname -r)/build
-.PHONY: all test run module clean FORCE
+.PHONY: all test test-user run module clean FORCE
 all: $(BUILD)/kds_engine $(BUILD)/libkds.a
 $(BUILD) $(SAN_BUILD):
 	mkdir -p $@
@@ -48,8 +48,9 @@ $(SAN_ENGINE): $(SAN_BUILD)/main.o $(SAN_BUILD)/libkds.a
 $(BUILD)/tests/%: tests/%.c $(SAN_BUILD)/libkds.a $(SAN_BUILD)/.flags
 	mkdir -p $(BUILD)/tests
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SAN_FLAGS) -MMD -MP -MF $@.d -MT $@ $< $(SAN_BUILD)/libkds.a $(LDFLAGS) -o $@
+test: test-user
 # Server tests hardcode build/kds_engine; their copied root selects the sanitizer binary.
-test: all $(SAN_ENGINE) $(TEST_BINS)
+test-user: all $(SAN_ENGINE) $(TEST_BINS)
 	@echo 'Sanitizers: $(if $(SAN_FLAGS),ASan + UBSan,unavailable; running without instrumentation)'
 	@set -e; for test in $(TEST_BINS); do echo "Running $$test"; "$$test"; done; \
 	if test -f tests/run_cases.py; then python3 tests/run_cases.py --engine $(SAN_ENGINE); fi; \

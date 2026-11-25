@@ -25,8 +25,20 @@ static void valid(const struct collatz_reference *reference, struct output_buffe
     assert(during.allocs - before.allocs == reference->terms);
     assert(during.live == reference->terms && during.live_bytes == reference->terms * sizeof(struct collatz_node));
     kshim_run_exit();
+    /* Exit frees every node and reports the count in dmesg. */
+    int n = snprintf(expected + offset, sizeof(expected) - offset, "collatz: freed %zu nodes\n", reference->terms);
+    assert(n > 0 && (size_t)n < sizeof(expected) - offset);
     assert(strcmp(out->text, expected) == 0 && list_empty(&collatz_list));
     assert(kshim_get_stats().frees - before.frees == reference->terms);
+    no_leaks();
+}
+
+static void check_empty_exit(struct output_buffer *out) {
+    assert(list_empty(&collatz_list));
+    no_leaks();
+    reset_output(out);
+    kshim_run_exit();
+    assert(strcmp(out->text, "collatz: freed 0 nodes\n") == 0);
     no_leaks();
 }
 
@@ -48,10 +60,10 @@ int main(void) {
             kshim_fail_alloc_after((long long)fail);
             assert(kshim_run_init() == -ENOMEM);
             assert(strcmp(out.text, "collatz: kmalloc failed\n") == 0);
-            assert(list_empty(&collatz_list));
             struct kshim_stats after = kshim_get_stats();
             assert(after.allocs - before.allocs == fail && after.frees - before.frees == fail);
-            no_leaks(); kshim_run_exit(); no_leaks(); ++failures;
+            check_empty_exit(&out);
+            ++failures;
         }
         /* With exactly terms successful allocations, initialization succeeds. */
         kshim_fail_alloc_after((long long)reference->terms); valid(reference, &out);
@@ -67,7 +79,7 @@ int main(void) {
         assert(kshim_run_init() == -EINVAL);
         assert(strcmp(out.text, "collatz: start must be positive\n") == 0);
         assert(kshim_get_stats().allocs == before.allocs);
-        assert(list_empty(&collatz_list)); no_leaks();
+        check_empty_exit(&out);
     }
     kshim_set_printk_sink(NULL, NULL);
     printf("PASS real Collatz module: default 25, 7 references, %zu injected failures, 2 invalid starts; zero leaks\n", failures);

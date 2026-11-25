@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 STATIC = Path(__file__).resolve().parent / "static"
 ROOT = Path(__file__).resolve().parents[2]
 MAX_BODY = 4096
+MAX_DRAIN = 8 * 1024 * 1024  # oversized bodies up to this size are read and discarded before the 400 reply
 
 
 class EngineError(Exception):
@@ -121,8 +122,38 @@ class Engine:
         return line + b"\n"
 
 
+class Server(ThreadingHTTPServer):
+    # The default backlog of 5 dropped connections when ~100 clients POSTed at once.
+    request_queue_size = 128
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "KDS/1"
+
+    def host_allowed(self):
+        # DNS-rebinding defence: a page on evil.example resolving to 127.0.0.1 still sends its own Host header.
+        host = self.headers.get("Host")
+        port = self.server.server_port
+        return host is None or host in (f"127.0.0.1:{port}", f"localhost:{port}")
+
+    def reject_host(self):
+        self.close_connection = True
+        self.error(403, "E_ORIGIN", "Host header is not allowed")
+
+    def discard_body(self, length):
+        """Read and drop an oversized request body so the client can finish sending and read our 400.
+
+        Closing with unread data makes the kernel send RST, which made large uploads fail with
+        BrokenPipe/ConnectionReset on the client before it could read the reply."""
+        remaining = length if 0 < length <= MAX_DRAIN else 0
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
 
     def setup(self):
         super().setup()
@@ -133,6 +164,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
         self.end_headers()
@@ -148,6 +181,9 @@ class Handler(BaseHTTPRequestHandler):
             self.error(503, "E_ENGINE", str(exc))
 
     def do_GET(self):
+        if not self.host_allowed():
+            self.reject_host()
+            return
         try:
             path = unquote(urlsplit(self.path).path, errors="strict")
         except (UnicodeError, ValueError):
@@ -180,6 +216,9 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, body, mime)
 
     def do_POST(self):
+        if not self.host_allowed():
+            self.reject_host()
+            return
         path = urlsplit(self.path).path
         if path not in ("/api/cmd", "/api/restart"):
             self.close_connection = True
@@ -204,6 +243,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "-1"))
             if length < 0 or length > MAX_BODY or self.headers.get("Transfer-Encoding"):
+                self.discard_body(length)
                 raise ValueError("Invalid body size")
             self.connection.settimeout(2)
             body = self.rfile.read(length)
@@ -235,7 +275,7 @@ def main():
         parser.error("invalid port or max-nodes")
     engine = Engine(args.engine, args.max_nodes)
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = Server(("127.0.0.1", args.port), Handler)
     except BaseException:
         engine.close()
         raise
@@ -245,7 +285,10 @@ def main():
     def stop(_signal, _frame):
         raise KeyboardInterrupt
 
-    signal.signal(signal.SIGTERM, stop)
+    # Python installs its own SIGINT handler only when SIGINT was not inherited as ignored (background/nohup/CI
+    # launches); installing it explicitly keeps Ctrl+C and group SIGINT on the same graceful path as SIGTERM.
+    for number in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, stop)
     print(f"http://127.0.0.1:{server.server_port}", flush=True)
     try:
         server.serve_forever()

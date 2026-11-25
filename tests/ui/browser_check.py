@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional real-browser check, adapted from the developer CDP script; stdlib only."""
+"""Optional real-browser check, using CDP; stdlib only."""
 import base64
 import hashlib
 import shutil
@@ -94,6 +94,8 @@ try:
     assert c.js('document.querySelectorAll("#graph .edge").length')==10
     assert c.js('document.querySelectorAll("#graph .node").length')==4
     assert c.js('document.documentElement.scrollWidth <= innerWidth')
+    assert c.js('$("bytes").previousElementSibling.textContent') == 'Хүссэн байт'
+    assert 'Ашигласан байт' not in c.js('document.body.innerText')
     c.screenshot('01_color_example.png')
     c.js('send("color delete index=1")')
     assert c.js('history[cursor].state.structures[0].count')==3
@@ -105,7 +107,37 @@ try:
     c.navigate(BASE+'/?run=reset;collatz%20run%20start=27&theme=dark',3)
     assert c.js('document.querySelectorAll("#graph .node").length')==112
     assert c.js('document.querySelectorAll("#graph .edge").length')==226
+    assert c.js('$("theme").getAttribute("aria-pressed") === "true"')
+    assert c.js('$("fit-all").textContent') == 'Бүгдийг багтаах'
+    width_fit = c.js('camera.scale')
+    c.js('$("fit-all").click()')
+    graph_fits = """(() => {
+      const viewport = graph.getBoundingClientRect();
+      return camera.scale >= .25 && [...graph.querySelectorAll(':scope > g')].every(group => {
+        const r = group.getBoundingClientRect();
+        return r.left >= viewport.left && r.top >= viewport.top &&
+               r.right <= viewport.right && r.bottom <= viewport.bottom;
+      });
+    })()"""
+    assert c.js(graph_fits)
+    print('Collatz 27 fit-all scale:', c.js('$("zoom-level").textContent'))
     c.screenshot('03_collatz_27_dark.png')
+    c.js('$("theme").click()')
+    c.screenshot('08_collatz_27_fit_all.png')
+    assert c.js('$("fit").textContent') == 'Өргөнд тааруулах'
+    c.js('$("fit").click()')
+    assert c.js('camera.scale') == width_fit
+    assert c.js('frame.style.minHeight === ""')
+    c.js('frame.focus()')
+    c.call('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'End', 'windowsVirtualKeyCode': 35})
+    assert c.js(graph_fits)
+    for width in (1650, 1500, 390):
+        c.call('Emulation.setDeviceMetricsOverride',{'width':width,'height':1100,'deviceScaleFactor':1,'mobile':width==390})
+        c.js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        assert c.js(f'innerWidth === {width} && document.documentElement.scrollWidth <= innerWidth')
+        assert c.js(graph_fits)
+    c.call('Emulation.setDeviceMetricsOverride',{'width':1500,'height':1350,'deviceScaleFactor':1,'mobile':False})
+    c.js('$("fit").click()')
     c.js('send("collatz run start=0")')
     assert c.js('document.getElementById("message").classList.contains("error")')
     c.screenshot('04_error.png')
@@ -118,9 +150,10 @@ try:
     c.call('Emulation.setDeviceMetricsOverride',{'width':390,'height':1100,'deviceScaleFactor':1,'mobile':True})
     c.navigate(BASE+'/?run=reset;color%20example',3)
     assert c.js('document.documentElement.scrollWidth <= innerWidth')
+    c.js('$("fit-all").click()')
     c.screenshot('07_mobile.png')
     assert not c.errors, c.errors
-    print('PASS browser: real Color/Collatz/Stack/Queue graph; 112 Collatz nodes/226 arrows; read-only history; error state; mobile no overflow; no JS exceptions; 7 screenshots in',OUT)
+    print('PASS browser: Color/Collatz/Stack/Queue graphs; all 112 Collatz nodes and 226 arrows fit on desktop and mobile; fit-width restored; requested bytes label; history lock; dark mode; error state; mobile no overflow; no JS exceptions; 8 screenshots in',OUT)
 finally:
     process.terminate()
     try: process.wait(timeout=5)

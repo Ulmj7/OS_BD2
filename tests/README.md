@@ -1,13 +1,27 @@
 # Repeatable QA for Kernel Data Structures
 
-Run `make test` at the repository root. Its contract is to compile and execute
+Run `make test` or `make test-user` at the repository root. Its contract is to compile and execute
 every `test_*.c`, then run `run_cases.py` and `test_server.py`, failing on a
 nonzero exit. No packages, root privileges, real kernel loading, or network
-services are needed. The HTTP tests use only an ephemeral IPv4 loopback port.
+services are needed. The 15 HTTP tests use only an ephemeral IPv4 loopback port.
+The frozen revision passed all four C suites and all nine protocol groups
+(229 replies) with ASan + UBSan. The full suite passed five consecutive runs
+and the HTTP suite passed 30 consecutive runs.
 
 The tests compile the actual kernel module `.c` files against the shim; they do
 not substitute test implementations. A successful userspace run does not prove
-that a `.ko` builds or loads on a real kernel.
+that a `.ko` builds or loads on a real kernel. In the shim, an ASan run and
+`kmalloc == kfree` accounting check for leaks. On 2026-11-25, the user built the updated modules against Arch Linux
+7.3.4-arch1-2 x86_64 headers, then loaded and unloaded each module twice
+with `insmod` and `rmmod`. Both pairs of runs succeeded. In each `dmesg`
+log, four color lines were followed by `color_list: freed 4 nodes`, and
+112 lines for `collatz start=27` (peak 9232 at index 77) were followed by
+`collatz: freed 112 nodes`. Manual §8.2.7 and Report §§8.7–8.9 record the
+commands and evidence.
+
+The default `start=25` and invalid `start=0` were not rerun on the
+updated real-kernel modules. Real-kernel ENOMEM, kmemleak/slabinfo, and
+the proposed 200-cycle load/unload check remain open.
 
 ## Expected results and independent derivation
 
@@ -16,10 +30,10 @@ that a `.ko` builds or loads on a real kernel.
 | L01 | Empty sentinel, `INIT_LIST_HEAD`, entry and first-entry | Head points to itself; empty traversal executes zero times | Circular list definition |
 | L02 | 5,000 operations, xorshift seed `0x0c011a72` | Add at head/tail/after, delete, and safe selective delete exactly match a plain pointer-array model after **every** operation | Separate array insertion/deletion with `memmove`; forward/reverse adjacency checks |
 | L03 | Every allocated item, followed by final cleanup | Fresh bytes `0xA5`, stable serial; deleted links poisoned; allocs=frees, live=bytes=0 | Shim API and list-del contract |
-| M01 | Actual color module init/exit | Exactly four printk lines, in order: violet `(138,43,226)`, red `(255,0,0)`, green `(0,255,0)`, blue `(0,0,255)`; no exit output | Correct RGB violet from brief; canonical primary-color fixture; literal expected output in `test_color_module.c` |
+| M01 | Actual color module init/exit | Exactly four printk lines, in order: violet `(138,43,226)`, red `(255,0,0)`, green `(0,255,0)`, blue `(0,0,255)`, then `color_list: freed 4 nodes` at exit | Correct RGB violet from brief; canonical primary-color fixture; literal expected output in `test_color_module.c` |
 | M02 | Color failure after 0,1,2,3 successful allocations | `-ENOMEM`, exact `color: kmalloc failed\n`, all earlier allocations freed | One allocation per color; no traversal until all four exist |
 | M03 | Color failure after 4 successful allocations | Successful init then leak-free exit | Four allocations suffice; injection triggers only on the **next** allocation |
-| M04 | Actual Collatz module with untouched default | Same 24 values and printk lines as start=25 | Required default, independent recurrence below |
+| M04 | Actual Collatz module with untouched default | Same 24 values and printk lines as start=25, then `collatz: freed 24 nodes` at exit | Required default, independent recurrence below |
 | M05 | Actual Collatz module with each reference start below | Every stored value and every printk byte matches independent Python reference; term count and peak match the brief | Python arbitrary-precision integer arithmetic, checked against independent reference table |
 | M06 | Each reference with failure after `k=0..terms-1` | `-ENOMEM`, exact `collatz: kmalloc failed\n`; alloc/free deltas both k; empty list | One allocation per term; all **1,250** allocation positions swept |
 | M07 | Each reference with failure after `terms` allocations | Success and zero leaks after exit | Boundary: no extra allocation is required |
@@ -43,16 +57,22 @@ that a `.ko` builds or loads on a real kernel.
 | P09 `binary_garbage` | NUL, non-UTF8, control bytes, 10,000-byte line, 128 random binary lines (seed `0xBAD1`), final state | Process exits 0, stderr empty, each reply valid JSON; final state works | Robust-input requirement; malformed data never becomes a successful command |
 | H01 | GET `/`, `app.js`, `style.css` | HTTP 200, Mongolian Cyrillic in page, correct HTML/JS/CSS MIME | Offline UI and static-serving requirements |
 | H02 | Two commands and GET `/api/state`, unknown engine command | Persistent nodes match; HTTP 200 engine error passes through unchanged | Persistent engine JSON API |
-| H03 | Invalid JSON/type/UTF8, missing/nonstring cmd, newline/CR, 513 bytes, wrong/missing MIME, 1 MiB body | HTTP 400 JSON error; server still handles state | HTTP trust-boundary requirements |
+| H03 | Invalid JSON/type/UTF8, missing/nonstring cmd, newline/CR, 513 bytes, wrong/missing MIME | HTTP 400 JSON error; server still handles state | HTTP trust-boundary requirements |
 | H04 | Exactly 512-byte command | HTTP 200, successful engine reply | Inclusive size boundary |
 | H05 | Enqueue then POST `/api/restart` | Empty structures, live=0 | Reset-by-engine-restart semantics |
 | H06 | `..`, percent-encoded dots/slashes, backslash, NUL and absolute-path probes | HTTP 400/403/404; never exposes target file | Static root confinement |
-| H07 | Inspect listening socket in Linux `/proc/net/tcp{,6}` | Only IPv4 127.0.0.1 on selected port | Explicit loopback-only binding |
+| H07 | Inspect listening socket in Linux `/proc/net/tcp` and, when present, `/proc/net/tcp6` | Only IPv4 127.0.0.1 on selected port. The test skips if the IPv4 proc file is missing | Explicit loopback-only binding; an IPv6-disabled system may lack the IPv6 proc file |
 | H08 | Kill child engine then GET state and enqueue | Fresh empty state, then successful command | Auto-restart contract |
 | H09 | 24 concurrent enqueues with eight client threads | All replies valid; exactly values 0..23 present once | Lock must pair each request with its own engine response |
 | H10 | Scan actual HTML/JS/CSS references | No remote CDN, font, script, stylesheet or fetch dependency | Offline UI contract; SVG namespace URI is not a dependency |
 | H11 | SIGTERM server after tests | Terminates within 5s; engine PID gone; no LEAK or traceback | Clean shutdown requirement |
-| H12 | Server with four live colors; SIGINT to its foreground process group | Real engine exit 0, server exit 0, no LEAK/traceback, engine PID gone | Terminal Ctrl+C must let the parent close stdin and the engine free its lists; exit observation calls the original shutdown method unchanged |
+| H12 | Server starts with default SIGINT and four live colors; SIGINT to its foreground process group | Real engine exit 0, server exit 0, no LEAK/traceback, engine PID gone | Explicit child disposition isolates server behavior from an ignored SIGINT in the test launcher; exit observation calls the original shutdown method unchanged |
+| H13 | Server starts with inherited ignored SIGINT and four live colors; group SIGINT | Same graceful server/engine exit 0 and no leaks | The server must install its own SIGINT handler even for background/nohup/CI launches; the launcher verifies SIGINT was initially ignored |
+| H14 | Ten 1 MiB POSTs to `/api/cmd` | Each returns HTTP 400 and `Connection: close`; subsequent state request succeeds | `test_oversized_body_is_rejected_cleanly`, regression for interrupted uploads |
+| H15 | GET/POST with foreign Host; GET with `localhost:<port>` and `127.0.0.1:<port>` | Foreign Host gets HTTP 403 `E_ORIGIN`; accepted hosts serve state | `test_foreign_host_header_is_rejected`, Host header allow-list |
+| H16 | 100 concurrent POSTs | All commands served; all 100 values stored exactly once | `test_hundred_simultaneous_posts_are_all_served`, request backlog and engine serialization |
+
+H11 is checked in the suite's teardown. It is not a separate unittest method.
 
 ## Collatz reference table
 
@@ -88,14 +108,14 @@ with `|`. Core tests use the exact documented classification. Search misses
 are `E_NOT_FOUND`; an empty CLI line is skipped, while an empty core command
 is `E_SYNTAX` and an empty HTTP command is HTTP 400.
 
-The initial scope is userspace API/protocol/HTTP QA. Browser interaction,
+The initial automated scope is userspace API/protocol/HTTP testing. Browser interaction,
 visual graph accuracy, real kernel compilation/loading, and the manual-only
 fresh-copy workflow require separate verification. Path traversal probes do
-not create a symlink inside `src/ui/static`, because QA owns `tests/**` only.
+not create a symlink inside `src/ui/static`, because the test only needs a temporary static root.
 
 ## Optional Brave/Chromium UI checks
 
-The developer's CDP checks are preserved in `tests/ui/browser_check.py` and
+The CDP checks are preserved in `tests/ui/browser_check.py` and
 `tests/ui/interactions.py`, with portable browser discovery, an isolated
 temporary browser profile, and an ephemeral debug port. They use Python's
 standard library and require an already installed Brave/Chromium; no downloads
@@ -110,7 +130,11 @@ python3 tests/ui/interactions.py
 
 Both scripts restart the local engine and replace its state. The first captures
 seven screenshots in `/tmp/kds-ui-check`; the second checks actual form
-submissions, validation, zoom/pan, theme, exact int64 display and history locks.
+submissions, Chromium integer patterns, zoom/pan, theme, exact int64 display and history locks.
+In headless Brave 158, both scripts passed. Fit-all and End kept all 112
+Collatz nodes visible at 25% or higher on desktop and at 390 px. On a
+narrow screen, fit-all may increase the frame height. The viewport checks
+found no horizontal page overflow at 320 or 390 px.
 Set `KDS_URL` for a different local server URL, `KDS_BROWSER` for the installed
 browser executable, and `KDS_OUTPUT` for screenshots/logs. Stop the server with
 Ctrl+C when finished. The scripts launch a disposable headless browser with

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernel Data Structures | IV-2-4</title>
+<style>
+  @page { size: 420mm 297mm; margin: 0; }
+  :root {
+    color-scheme: light;
+    --ink: #243353;
+    --navy: #242d59;
+    --muted: #425375;
+    --rule: #4e5c85;
+    --blue: #d6e7fa;
+    --tile: #c6dff8;
+    --card: #eaf2fc;
+    --paper: #fcfdff;
+    font: 14pt/1.27 "Nimbus Roman", "Times New Roman", "Liberation Serif", "Noto Serif", serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); }
+  h1, h2, h3, p, figure { margin: 0; }
+  h1, h2, h3 { color: var(--navy); }
+  h2 { font-size: 16pt; line-height: 1.1; margin-bottom: 2.5mm; }
+  h3 { font-size: 13.5pt; line-height: 1.1; }
+  a { color: inherit; text-underline-offset: .14em; }
+  code { font: 0.92em "DejaVu Sans Mono", monospace; }
+  .poster {
+    width: 420mm;
+    height: 297mm;
+    margin: auto;
+    display: grid;
+    grid-template-rows: 44mm minmax(0, 1fr) 8mm;
+  }
+  .masthead, .content { display: grid; grid-template-columns: 82mm minmax(0, 1fr); }
+  .masthead { border-bottom: 1mm solid var(--rule); background: var(--blue); }
+  .school {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 2mm;
+    padding: 3mm;
+    border-right: 1mm solid var(--rule);
+    text-align: center;
+    background: var(--card);
+  }
+  .school img { display: block; height: 20.5mm; width: auto; }
+  .school p { color: var(--navy); font-weight: bold; font-size: 13pt; line-height: 1.12; }
+  .headline {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 1mm;
+    padding: 4mm 6mm;
+    text-align: center;
+  }
+  .course { color: var(--navy); font-size: 18pt; font-weight: bold; }
+  h1 { font-size: 40pt; line-height: 1; }
+  .subtitle { font-size: 18pt; }
+  .assignment { color: var(--muted); font-size: 12pt; }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 4mm;
+    padding: 4mm 4.5mm;
+    background: var(--blue);
+    border-right: 1mm solid var(--rule);
+  }
+  .sidebar section { padding: 4mm; background: var(--card); border-radius: 3mm; }
+  .sidebar h2 { font-size: 14pt; margin-bottom: 2mm; }
+  .sidebar section:first-child p { font-size: 12.5pt; line-height: 1.2; }
+  .column:first-child .card > p { font-size: 13pt; line-height: 1.21; }
+  .sidebar .credits { background: transparent; padding-top: 1mm; padding-bottom: 1mm; }
+  .credits p { font-size: 13pt; }
+  .team { margin-top: 4mm; }
+  .roster { list-style: none; margin: 0; padding: 0; }
+  .roster li { display: flex; gap: 2mm; justify-content: space-between; font-size: 13pt; padding: .65mm 0; }
+  .roster small { font-size: 12pt; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sidebar .github { margin-top: auto; text-align: center; }
+  .github h2 { font-size: 17pt; }
+  .github img { display: block; width: 43mm; height: 43mm; margin: 0 auto 1.8mm; }
+  .url { display: inline-block; font-size: 10.5pt; }
+
+  .columns {
+    display: grid;
+    grid-template-columns: .94fr 1.15fr 1.03fr;
+    gap: 4mm;
+    padding: 4mm;
+  }
+  .column { display: flex; min-width: 0; flex-direction: column; gap: 4mm; }
+  .card { background: var(--card); border-radius: 3.5mm; padding: 4mm; }
+  .card > h2 { text-align: center; }
+  .flow { flex: 1; display: flex; flex-direction: column; }
+  .flow h2 { text-align: left; font-size: 15pt; }
+  .flow svg { display: block; width: 100%; flex: 1; min-height: 0; }
+  .flow .box { fill: var(--tile); }
+  .flow .web { fill: var(--navy); }
+  .flow .edge { stroke: var(--rule); stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  .flow text { fill: var(--navy); font-size: 15px; text-anchor: middle; }
+  .flow .node-title { font-size: 18px; font-weight: bold; }
+  .flow .web-label { fill: white; }
+  .flow .edge-label { fill: var(--muted); text-anchor: start; font-size: 14px; }
+
+  .visuals { display: flex; flex-direction: column; }
+  .visuals > h2 { margin-bottom: 1mm; }
+  .visuals figure {
+    display: grid;
+    flex: 1;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: center;
+    gap: 1.2mm;
+    padding: 2.5mm 0;
+    min-height: 0;
+  }
+  .visuals figure + figure { border-top: .3mm solid #acbfdd; }
+  .visuals figure:nth-of-type(2) { flex-grow: 1.15; }
+  .visuals figure:last-child { padding-bottom: 0; }
+  .shot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+  }
+  .shot img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border: .25mm solid #b3c5db;
+  }
+  figcaption { font-size: 12pt; line-height: 1.16; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3mm;
+    margin: 0 0 3.5mm;
+  }
+  .stats div {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    min-height: 27mm;
+    padding: 2mm;
+    border-radius: 2.5mm;
+    background: var(--tile);
+    text-align: center;
+  }
+  .stats dt { grid-row: 2; font-size: 12.5pt; line-height: 1.12; }
+  .stats dd { margin: 0 0 1mm; color: var(--navy); font-size: 24pt; font-weight: bold; line-height: 1.04; }
+  .results p, .conclusions li { font-size: 11.5pt; line-height: 1.18; }
+  .results p + p { margin-top: 2mm; }
+  .conclusions { flex: 1; }
+  .conclusions ul { margin: 0; padding-left: 5mm; }
+  .conclusions li + li { margin-top: 2mm; }
+  .unbroken { white-space: nowrap; }
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-top: .4mm solid #acbfdd;
+    background: var(--card);
+    color: var(--muted);
+    font-size: 11pt;
+  }
+
+  @media print {
+    html, body { width: 420mm; margin: 0; }
+    .poster { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  }
+  @media screen and (max-width: 1587px) {
+    .poster { width: 100%; height: auto; grid-template-rows: auto auto auto; }
+    .masthead, .content { grid-template-columns: minmax(220px, 21%) minmax(0, 1fr); }
+    .footer { min-height: 8mm; padding: 1mm 4mm; text-align: center; }
+    .shot img { width: 100%; }
+  }
+  @media screen and (max-width: 1040px) {
+    .masthead, .content { grid-template-columns: 1fr; }
+    .school, .sidebar { border-right: 0; }
+    .sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sidebar .github { grid-column: 1 / -1; }
+    .columns { grid-template-columns: minmax(0, 1fr); }
+    .flow svg { max-height: 92mm; }
+  }
+  @media screen and (max-width: 580px) {
+    .sidebar { grid-template-columns: minmax(0, 1fr); }
+    h1 { font-size: 31pt; }
+    .subtitle { font-size: 15pt; }
+  }
+</style>
+</head>
+<body>
+<main class="poster">
+  <header class="masthead">
+    <div class="school">
+      <img src="../img/poster/must-crest.png" alt="ШУТИС-ийн сүлд">
+      <p>МЭДЭЭЛЭЛ, ХОЛБООНЫ<br>ТЕХНОЛОГИЙН СУРГУУЛЬ</p>
+    </div>
+    <div class="headline">
+      <p class="course">F.CSM302 Үйлдлийн систем</p>
+      <h1>Kernel Data Structures</h1>
+      <p class="subtitle">Linux kernel-ийн list_head: өнгөний жагсаалт, Collatz дараалал ба интерактив бүтцийн граф</p>
+      <p class="assignment">OS Concepts 10e · 3-р бүлэг · Programming Project 4 · Бие даалт 2</p>
+    </div>
+  </header>
+
+  <div class="content">
+    <aside class="sidebar">
+      <section>
+        <h2>ХУРААНГУЙ</h2>
+        <p>Linux-ийн <code>list_head</code> бүтцийг ашиглан дөрвөн өнгө болон Collatz дарааллыг хадгалах хоёр кернел модуль боловсруулсан. Мөн жагсаалтын элементүүд хоорондоо хэрхэн холбогдож байгааг ойлгомжтой харуулах офлайн веб хэрэгсэл хийсэн. Уг хэрэгсэл нь C хэл дээр хэрэгжүүлсэн жагсаалтын үйлдэл бүрийн дараах өөрчлөлт болон санах ойн ашиглалтыг дүрслэн харуулдаг.</p>
+      </section>
+      <section class="credits">
+        <h2>УДИРДАГЧ БАГШ</h2>
+        <p>Г. Ганбат /F.CS10/</p>
+        <p>Д. Батмөнх /F.CS21/</p>
+        <h2 class="team">ГҮЙЦЭТГЭГЧ БАГ IV-2-4</h2>
+        <ul class="roster">
+          <li>Б. Лхамрагчаа <small>B241940102</small></li>
+          <li>Г. Үлэмж <small>B232270805</small></li>
+          <li>Т. Буянтөгс <small>B231910034</small></li>
+          <li>Э. Төгсбаяр <small>B221910021</small></li>
+          <li>Ө. Чинзориг <small>B200900028</small></li>
+          <li>Б. Идэрбат <small>B242270075</small></li>
+        </ul>
+      </section>
+      <section class="github">
+        <h2>GITHUB</h2>
+        <a href="https://github.com/Ulmj7/OS_BD2">
+          <img src="../img/poster/github-qr.png" alt="Төслийн GitHub холбоосын QR код">
+          <span class="url">https://github.com/Ulmj7/OS_BD2</span>
+        </a>
+      </section>
+    </aside>
+
+    <div class="columns">
+      <div class="column">
+        <section class="card">
+          <h2>АСУУДАЛ</h2>
+          <p>Кернелийн <code>dmesg</code> командаар жагсаалтын утгуудыг дарааллаар нь харах боломжтой. Гэхдээ зөвхөн текстэн мэдээллээс <code>next</code>, <code>prev</code> холбоосууд хаашаа зааж байгаа болон жагсаалтаас элемент хасах үед холбоосууд хэрхэн өөрчлөгдөж байгааг ойлгоход хүндрэлтэй байдаг. Мөн Collatz дараалал хэдэн элементтэй байхыг урьдчилан мэдэх боломжгүй.</p>
+        </section>
+        <section class="card">
+          <h2>ШИЙДЭЛ</h2>
+          <p>Хоёр модуль нь дугуй, хоёр чиглэлт холбоост жагсаалт үүсгэдэг. Collatz дараалал анхдагч тохиргоогоор 25-аас эхэлнэ. Модулийг кернелээс салгах үед жагсаалтын бүх зангилааг устгаж, ашигласан санах ойг чөлөөлдөг. Мөн модулийн эх кодыг өөрчлөхгүйгээр <code>shim</code> ашиглан хөрвүүлж, хэрэглэгчийн орчинд ажиллуулан шалгасан.</p>
+        </section>
+        <section class="card flow">
+          <h2>Системийн ажиллагааны урсгал</h2>
+          <svg viewBox="0 0 325 305" role="img" aria-labelledby="flow-title flow-desc">
+            <title id="flow-title">Веб дүрслэлийн өгөгдлийн урсгал</title>
+            <desc id="flow-desc">C хөдөлгүүр shim-ийн жагсаалтын үйлдлийг ашиглаж, JSON төлөвийг Python HTTP серверт өгнө. Сервер төлөвийг веб интерфейст дамжуулж, SVG холбоосуудыг дүрсэлнэ.</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0L10 5L0 10Z" fill="#4e5c85"/>
+              </marker>
+            </defs>
+            <rect class="box" x="0" y="8" width="204" height="64" rx="9"/>
+            <text class="node-title" x="102" y="34">User-space shim</text>
+            <text x="102" y="54">list_head · kmalloc · kfree</text>
+            <path class="edge" d="M102 72V117"/>
+            <text class="edge-label" x="113" y="98">API нийлүүлнэ</text>
+            <rect class="box" x="0" y="117" width="204" height="64" rx="9"/>
+            <text class="node-title" x="102" y="143">C хөдөлгүүр</text>
+            <text x="102" y="163">stdin команд → JSON мөр</text>
+            <path class="edge" d="M102 181V226"/>
+            <text class="edge-label" x="113" y="207">Төлөв өгнө</text>
+            <rect class="box" x="0" y="226" width="204" height="65" rx="9"/>
+            <text class="node-title" x="102" y="252">Python HTTP сервер</text>
+            <text x="102" y="273">127.0.0.1 · Origin / Host</text>
+            <rect class="web" x="241" y="116" width="84" height="175" rx="9"/>
+            <text class="node-title web-label" x="283" y="158">Web UI</text>
+            <text class="web-label" x="283" y="185">SVG граф</text>
+            <text class="web-label" x="283" y="208">next / prev</text>
+            <text class="edge-label" x="207" y="249">JSON</text>
+            <path class="edge" d="M204 258H239"/>
+          </svg>
+        </section>
+      </div>
+
+      <section class="card column visuals">
+        <h2>ТУРШИЛТ БА ДҮРСЛЭЛ</h2>
+        <figure>
+          <div class="shot"><img src="../img/poster/color-example.png" alt="Violet болон улаан, ногоон, цэнхэр зангилаатай өнгөний граф"></div>
+          <figcaption><b>Зураг 1.</b> Дөрвөн өнгөний дугуй жагсаалт. Үргэлжилсэн сум <code>next</code>, тасархай сум <code>prev</code> холбоосыг заана.</figcaption>
+        </figure>
+        <figure>
+          <div class="shot"><img src="../img/poster/collatz-fit-all.png" alt="Collatz 27 дарааллын 112 зангилаа нэг хүрээнд харагдаж байна"></div>
+          <figcaption><b>Зураг 2.</b> Collatz 27-ийн 112 зангилааг «Бүгдийг багтаах» горимоор нэг хүрээнд харуулав.</figcaption>
+        </figure>
+        <figure>
+          <div class="shot"><img src="../img/poster/stack-dark.png" alt="Бараан горимд гурван зангилаатай стек ба TOP тэмдэглэгээ"></div>
+          <figcaption><b>Зураг 3.</b> Бараан горим дахь стек. Сүүлд оруулсан −5 утга TOP байрлалд байна.</figcaption>
+        </figure>
+      </section>
+
+      <div class="column">
+        <section class="card results">
+          <h2>ҮР ДҮН</h2>
+          <dl class="stats">
+            <div><dt>C хөдөлгүүрийн<br>шалгасан хариу · PASS</dt><dd>229/229</dd></div>
+            <div><dt>HTTP автомат тест<br>PASS</dt><dd>15/15</dd></div>
+            <div><dt>ENOMEM байрлал<br>shim-д алдагдал 0</dt><dd>1 254</dd></div>
+            <div><dt>Collatz 27 · кернел<br>зангилаа / оргил</dt><dd>112 / 9232</dd></div>
+          </dl>
+          <p><b>Тайлбар.</b> ASan болон UBSan ашиглан C хэл дээрх 4 багц тестийг нийт 9 нөхцөлөөр шалгасан. Collatz дарааллын 1 250 болон өнгөний жагсаалтын 4 байрлалд санах ой хуваарилах алдааг зориудаар үүсгэж туршихад <code>kmalloc</code> болон <code>kfree</code> функцийн дуудалтын тоо тэнцүү байсан.</p>
+          <p>2026 оны 11-р сарын 25-нд Arch Linux <span class="unbroken">7.3.4-arch1-2</span> дээр хоёр модулийг ачаалж, буулган туршсан. Collatz дарааллыг 27-оос эхлүүлэхэд 111 алхам хийж, 77-р индекс дээр хамгийн их утгад хүрсэн. Модулиудыг <code>rmmod</code> командаар буулгасны дараа өнгөний жагсаалтын 4, Collatz дарааллын 112 зангилааг бүрэн чөлөөлсөн нь логоор батлагдсан.</p>
+        </section>
+        <section class="card conclusions">
+          <h2>ДҮГНЭЛТ</h2>
+          <ul>
+            <li>Кернелийн <code>dmesg</code> гаралт нь лавлагаа үр дүнтэй тохирсон. Мөн өмнөх хувилбарыг Ubuntu 24.04 болон Xubuntu 25.10 үйлдлийн систем дээр бусад баг дахин туршиж шалгасан.</li>
+            <li>Ирсэн дөрвөн санал, шүүмжийн дагуу HTTP тест, Host шалгалт болон Chrome хөтчөөс хандахтай холбоотой асуудлуудыг зассан. Үүнээс гадна чөлөөлсөн зангилааны мэдээллийг логт хэвлэх, графыг дэлгэцэд багтааж харах боломж болон <span class="unbroken">GPL-2.0</span> лицензийг нэмсэн.</li>
+            <li>Веб граф нь хэрэглэгчийн орчинд ажиллаж буй жагсаалтын бүтцийг дүрслэн харуулдаг. Харин бодит кернелийн санах ойн ашиглалтыг <code>kmemleak</code> болон <code>slabinfo</code> ашиглан хэмжиж шалгаагүй.</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">Код, тест, баримтыг AI хэрэгслийн тусламжтай бэлтгэж, баг хянаж, давтан шалгасан</footer>
+</main>
+</body>
+</html>

@@ -1,20 +1,24 @@
 # Independent reproducibility and documentation review — 2026-10-28
 
-Reviewed project: IV-2-4, F.CSM302 BD1, Kernel Data Structures. This is an
+The original local review is preserved below. Its findings, paths, and test
+counts describe the 2026-10-28 snapshot. The external peer-review follow-up
+at the end records the current revision.
+
+Reviewed project: IV-2-4, F.CSM302 BD2, Kernel Data Structures. This is an
 independent QA review of the supplied local deliverable, not an external team's
 published peer review. No production code or submitted documentation was edited.
 
 ## Follow-up final status — 2026-10-28
 
-The original observations below are retained as review history. Their current
-status after the developer and tech-lead changes is:
+The original observations below are retained as review history. Their status
+after the 2026-10-28 fixes was:
 
 | Finding | Final status | Evidence / owner |
 | --- | --- | --- |
 | 1: acquisition placeholder | **Open, user-side GitHub publication**; offline acquisition is now documented | The real repository URL still needs the user's publication step. Tech lead added supplied-folder/archive copying to Manual 8.2.1, matching the successful fresh-copy workflow; this is not a remaining production-code defect. |
 | 2: Collatz example workflow/image | **Closed by tech lead** | Current Manual PDF explicitly uses the direct command box for start=0 before deletion; the caption now identifies step 3 and the preserved 112-node state. This matches the independently tested direct-command behavior. |
 | 3: Ctrl+C engine cleanup | **Closed by developer; regression verified before/after** | Engine Popen now has `start_new_session=True`. New `ServerTests.test_group_sigint_shutdown_frees_live_nodes` fails with real child exit -2 against the saved original server and passes against the fixed server, including the fully sanitized suite. |
-| 4: clipped diagram label | **Closed by tech lead** | The current Report PDF text contains the entire `Kbuild → .ko: энд ажиллуулаагүй` note; the SVG label was moved left with end alignment. |
+| 4: clipped diagram label | **Closed by tech lead** | The 2026-10-28 Report PDF text contains the entire `Kbuild → .ko: энд ажиллуулаагүй` note; the SVG label was moved left with end alignment. |
 | 5: UI script availability | **Closed by tech lead** | Current Report and Manual list both `tests/ui/` scripts, their installed-browser prerequisite and exclusion from `make test`. |
 
 Regression details: the test starts an isolated real server with four live
@@ -130,7 +134,7 @@ from a production snapshot to create an expectation.
 
 **Repro:** Start with only the Manual and attempt its clone step.
 **Expected:** A concrete repository URL or downloadable source archive.
-**Actual:** `<GitHub холбоос>` / `[GitHub холбоос]` placeholders; no published
+**Actual:** Unfilled GitHub URL fields; no published
 repository or release is supplied. No network clone was attempted in this
 review. **Impact:** A stranger cannot acquire the deliverable using the Manual
 alone. This is already acknowledged by the documents, but remains a handoff
@@ -189,7 +193,7 @@ The optional scripts are now in `tests/ui/browser_check.py` and
 ephemeral debug port and isolated temporary profile. Both passed against the
 fresh server. `tests/README.md` documents the already-installed Brave/Chromium
 requirement and commands; they intentionally remain separate from `make test`.
-Update the current statements that UI scripts are absent from the repository.
+Update the then-current statements that UI scripts are absent from the repository.
 
 ## Verdict
 
@@ -200,3 +204,30 @@ A stranger who receives the source can follow the Manual for normal
 build/run/tests; publishing and filling the GitHub URL remains a user-side
 handoff task. Real kernel execution and a genuinely different
 computer/distribution remain unverified; the documents disclose those limits.
+
+## External peer-review follow-up
+
+The four external reviews were written by II-4-1 (two PDFs), IV-2-1, and
+IV-2-7. This section records their scope alongside the earlier local check.
+II-4-1 reproduced interrupted oversized HTTP uploads and an IPv6-disabled
+loopback test failure. IV-2-7 independently found the missing
+`/proc/net/tcp6` issue. The current server drains oversized request bodies
+up to 8 MiB before replying with HTTP 400 and closing the connection. The
+loopback test checks IPv4 even when the IPv6 proc file is absent. The suite
+also checks rejection of an unexpected Host and 100 concurrent POSTs.
+The frozen revision passed the ASan + UBSan suite in five consecutive
+runs and the 15-test HTTP suite in 30 consecutive runs. The main run
+covered four C suites and nine protocol groups with 229 checked replies.
+
+II-4-1 and IV-2-1 independently loaded and unloaded the earlier modules;
+IV-2-7 compiled them in a sandbox. Report §8.9 cites those runs. The
+`freed N nodes` messages were added afterwards and are exercised by shim
+tests. On 2026-11-25, the user rebuilt both modules on Arch Linux
+7.3.4-arch1-2 x86_64 and loaded and unloaded each module twice. Both runs
+succeeded and produced identical module output. Color printed four entries
+then `color_list: freed 4 nodes`. Collatz `start=27` printed 112 entries
+with 9232 at index 77, then `collatz: freed 112 nodes`. Report §8.8
+records the commands and `dmesg` excerpts. The updated modules were not
+rerun with `start=25` or `start=0`. Real-kernel ENOMEM, kmemleak/slabinfo,
+and 200-cycle load/unload checks remain open. The detailed response is in
+`docs/IV-2-4_Review_Response.md`.

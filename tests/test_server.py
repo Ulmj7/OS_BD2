@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """HTTP boundary tests against the real stdlib server and persistent engine."""
 import concurrent.futures
+from functools import partial
 import http.client
 import json
 import os
@@ -20,6 +21,16 @@ from run_cases import assert_state, logical_state, structures
 ROOT = Path(__file__).resolve().parent.parent
 
 
+class _FakeSocket:
+    """Minimal socket for http.client.HTTPResponse to parse bytes we already received."""
+    def __init__(self, data):
+        import io
+        self._file = io.BytesIO(data)
+
+    def makefile(self, *_args, **_kwargs):
+        return self._file
+
+
 class ServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -33,6 +44,7 @@ class ServerTests(unittest.TestCase):
             ["python3", "-u", str(ROOT / "src/ui/server.py"), "--port", str(cls.port),
              "--engine", str(ROOT / "build/kds_engine")],
             cwd=ROOT, stdout=cls.log, stderr=cls.log,
+            preexec_fn=partial(signal.signal, signal.SIGINT, signal.SIG_DFL),
         )
         try:
             deadline = time.monotonic() + 8
@@ -98,6 +110,34 @@ class ServerTests(unittest.TestCase):
         finally:
             conn.close()
 
+    @classmethod
+    def request_oversized(cls, size):
+        """POST a body far above the server limit; return (status, headers, raw) or None if the server reset the socket.
+
+        A server may legally close early; the client side must not turn that race into a test error."""
+        import socket
+        head = (f"POST /api/cmd HTTP/1.1\r\nHost: 127.0.0.1:{cls.port}\r\n"
+                f"Content-Type: application/json\r\nContent-Length: {size}\r\n\r\n").encode()
+        with socket.create_connection(("127.0.0.1", cls.port), timeout=5) as sock:
+            try:
+                sock.sendall(head + b"x" * size)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            data = b""
+            try:
+                while True:  # the server answers with Connection: close, so read to EOF
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+            except ConnectionResetError:
+                pass
+        if not data:
+            return None
+        response = http.client.HTTPResponse(_FakeSocket(data))
+        response.begin()
+        return response.status, dict(response.getheaders()), response.read()
+
     def command(self, command):
         status, _, raw = self.request("POST", "/api/cmd", json.dumps({"cmd": command}), "application/json")
         self.assertEqual(status, 200, raw)
@@ -156,7 +196,6 @@ class ServerTests(unittest.TestCase):
             (json.dumps({"cmd": "x" * 513}).encode(), "application/json"),
             (b'{"cmd":"state"}', "text/plain"),
             (b'{"cmd":"state"}', None),
-            (b"x" * (1024 * 1024), "application/json"),
             (b'\xff{"cmd":"state"}', "application/json"),
         ]
         for body, mime in cases:
@@ -166,6 +205,44 @@ class ServerTests(unittest.TestCase):
                 self.assertIn("application/json", headers.get("Content-Type", ""))
                 self.assertIsInstance(json.loads(raw), dict)
         self.assertTrue(self.command("state")["ok"], "server remains usable after malformed input")
+
+    def test_oversized_body_is_rejected_cleanly(self):
+        # Regression for the flaky BrokenPipeError: 1 MiB is drained, so the 400 reply must always arrive.
+        for _ in range(10):
+            result = self.request_oversized(1024 * 1024)
+            self.assertIsNotNone(result, "server reset the connection instead of replying 400")
+            status, headers, raw = result
+            self.assertEqual(status, 400, raw[:200])
+            self.assertEqual(headers.get("Connection", "").lower(), "close")
+            self.assertFalse(json.loads(raw)["ok"])
+        self.assertTrue(self.command("state")["ok"])
+
+    def test_foreign_host_header_is_rejected(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", "/api/state", headers={"Host": "evil.example"})
+            response = conn.getresponse()
+            body = json.loads(response.read())
+        finally:
+            conn.close()
+        self.assertEqual(response.status, 403)
+        self.assertEqual(body["error"]["code"], "E_ORIGIN")
+        for host in (f"localhost:{self.port}", f"127.0.0.1:{self.port}"):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            try:
+                conn.request("GET", "/api/state", headers={"Host": host})
+                self.assertEqual(conn.getresponse().status, 200, host)
+            finally:
+                conn.close()
+        status, _, raw = self.request("POST", "/api/cmd", b'{"cmd":"state"}', "application/json")
+        self.assertEqual(status, 200, raw)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("POST", "/api/cmd", body=b'{"cmd":"state"}',
+                         headers={"Host": "evil.example", "Content-Type": "application/json"})
+            self.assertEqual(conn.getresponse().status, 403)
+        finally:
+            conn.close()
 
     def test_exact_512_character_command(self):
         self.assertTrue(self.command("state" + " " * 507)["ok"])
@@ -189,7 +266,10 @@ class ServerTests(unittest.TestCase):
 
     def test_listens_only_on_ipv4_loopback(self):
         matches = []
-        for procfile in ("/proc/net/tcp", "/proc/net/tcp6"):
+        if not Path("/proc/net/tcp").exists():
+            self.skipTest("/proc/net/tcp is unavailable on this platform")
+        # IPv6 may be disabled (containers, sandboxes): then /proc/net/tcp6 does not exist and there is nothing to leak.
+        for procfile in (p for p in ("/proc/net/tcp", "/proc/net/tcp6") if Path(p).exists()):
             for line in Path(procfile).read_text().splitlines()[1:]:
                 fields = line.split()
                 address, port = fields[1].split(":")
@@ -219,11 +299,29 @@ class ServerTests(unittest.TestCase):
         actual = [n["fields"]["value"] for n in structures(state)["queue"]["nodes"]]
         self.assertEqual(sorted(actual), list(range(24)))
 
+    def test_hundred_simultaneous_posts_are_all_served(self):
+        # request_queue_size was 5: a burst of 100 clients lost 58 connections. Every one must be answered now.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=100) as pool:
+            replies = list(pool.map(lambda n: self.command(f"queue enqueue value={n}"), range(100)))
+        self.assertEqual(len(replies), 100)
+        state = self.command("state")
+        actual = [n["fields"]["value"] for n in structures(state)["queue"]["nodes"]]
+        self.assertEqual(sorted(actual), list(range(100)))
+        self.assertEqual(state["state"]["kmalloc"]["live"], 100)
+
     def test_group_sigint_shutdown_frees_live_nodes(self):
-        # Observe the real child's exit status without changing signal handling.
+        self.assert_group_sigint_shutdown(signal.SIG_DFL)
+
+    def test_group_sigint_shutdown_when_inherited_ignored(self):
+        self.assert_group_sigint_shutdown(signal.SIG_IGN)
+
+    def assert_group_sigint_shutdown(self, initial_sigint):
+        # Control inheritance before Python starts; the server installs its own handler.
         launcher = """
 import runpy
+import signal
 import sys
+print('QA_SIGINT_IGNORED=' + str(signal.getsignal(signal.SIGINT) == signal.SIG_IGN), flush=True)
 server = runpy.run_path(sys.argv[1])
 stop = server['Engine']._stop
 def observed_stop(engine):
@@ -258,6 +356,7 @@ server['main']()
                      str(ROOT / "src/ui/server.py"), "--port", str(port),
                      "--engine", str(ROOT / "build/kds_engine")],
                     cwd=ROOT, stdout=log, stderr=log, start_new_session=True,
+                    preexec_fn=partial(signal.signal, signal.SIGINT, initial_sigint),
                 )
                 engine_pids = []
                 try:
@@ -281,6 +380,7 @@ server['main']()
                     os.killpg(process.pid, signal.SIGINT)
                     process.wait(timeout=8)
                     output = log_path.read_text(errors="replace")
+                    self.assertIn("QA_SIGINT_IGNORED=" + str(initial_sigint == signal.SIG_IGN), output)
                     self.assertEqual(process.returncode, 0, output)
                     self.assertNotIn("LEAK", output)
                     self.assertNotIn("Traceback", output)
